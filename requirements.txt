@@ -1,0 +1,7 @@
+# Python deps for the ML pipeline (CPU). Create a venv and install:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#   .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+pandas
+scikit-learn
+joblib
+# torch (CPU) — install separately from the pytorch CPU index (see above)

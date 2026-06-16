@@ -1,0 +1,25 @@
+# --- Data (PII: user_id, country, LTV, payments) — lives in ClickHouse `ml`, NOT git ---
+*.csv
+*.csv.gz
+*.tsv
+dataset_cache/
+segments_out/
+ml/segments/
+
+# --- Trained models / derived artifacts (reproducible from scripts) ---
+*.pt
+*.joblib
+ml/nn/
+
+# --- Python env / caches ---
+.venv/
+__pycache__/
+*.pyc
+
+# --- Go build output ---
+/mlshaya_segments
+*.exe
+
+# --- Logs / scratch ---
+*.log
+/tmp/
