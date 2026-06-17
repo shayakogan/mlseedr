@@ -62,6 +62,22 @@ churn 55% and don't need a model; route them straight to the soft-cancel save fl
 4. **Add as a 3rd head** to the multi-task backbone (conv / renewal / churn) once the
    feature set is richer, so retention and conversion share one representation.
 
+## 4b. Alignment with `SEEDR_CHURN_PLAN.md` (the pre-existing draft plan)
+
+This work executes the draft plan. Done ✅ / open ⬜:
+- ✅ Subscriber-status panel reconstructed from the event stream (plan §3) — and the
+  sanity-check it asked for surfaced the left-censoring (~1.4K of 3.2K reconstructable).
+- ✅ Voluntary-churn label `canceled/expired` in 30d (plan §2 primary); 30d horizon (§4).
+- ✅ Reuse of conversion features + billing/tenure/cycle features (§5); calibration-ready,
+  no resampling (§6).
+- ⬜ **Second label `label_cancel_scheduled_30d`** (predict the *intent* before the click) —
+  plan §2/§9 wants it as a distinct, more-actionable target. I used `had_cancel_sched` only
+  as a cohort split + feature; the dedicated early-signal model is still to build.
+- ⬜ **Engagement-decline features** (last 7/14d vs prior 30/90d ratio — "the churn tell", §5).
+- ⬜ **Survival / time-to-event** framing (§6) — deferred per plan (classification first).
+- ⬜ **`ml.churn_scores`** scored at-risk list (§8.3) — needs a fresh "today" feature snapshot
+  (cache is 2026-06-11); the dataset/model are ready to produce it.
+
 ## 5. Reproduce
 
 ```bash
