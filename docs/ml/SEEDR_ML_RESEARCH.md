@@ -125,6 +125,36 @@ not trustworthy. **Only a randomized holdout resolves this.**
 - uplift = conv(sent) − conv(holdout); then train a T-/X-learner on the randomized data
   and target only positive-uplift users. Evaluate with Qini/AUUC.
 
+## 5c. Bigger + richer dataset experiment (2026-06-17)
+
+Goal: more data in training + new conversion-predictive features. Rebuilt with
+neg-rate 0.5 → **7,167,817 rows × 69 cols** (was 3.53M × 61); added historical-
+compatible features: **intent** `promo_sub_30/90` + `days_since_promo_sub`
+(Promotional/visited_subscription — a ×7 raw-lift signal: 13.4% pay vs 1.9% base),
+**sessions** `sessions_7/30` (session_end), **engagement trend** `pv_trend_7_30`,
+`wa_trend_7_30`, and **temporal** `send_dow`. (Edge/QoS/bandwidth features can't be
+added — `request_events` starts 2026-06-02, after the mautic-era labels.)
+Training capped at 4M rows in-RAM (all positives + sampled negatives, weights
+rescaled; full dataset on disk + in `ml.train_email_conversion`).
+
+| Model | before | after (bigger + richer) |
+|---|---|---|
+| LogReg | AUC 0.953 / lift@1% ×65 | **AUC 0.950 / ×64** (unchanged) |
+| GBM | AUC 0.756 | AUC 0.803 (better, still < LogReg) |
+
+**Honest result: more data + new features did NOT move conversion AUC — the model
+is at a ~0.95 ceiling.** New features rank in importance (`promo_sub_90`,
+`days_since_promo_sub_missing`) but low: the intent/session/trend signals correlate
+with what the model already captures (past-payment via `seg_winback_active`,
+`txns_365d`, recency, monetary, `country`), so they add little *incremental* AUC.
+The bottleneck isn't features or data volume — the free→paid label is dominated by
+prior-payment behaviour; the rest is largely irreducible without a **causal (uplift)**
+frame or **new-era product-usage features** (edge/QoS) once they have history.
+
+Takeaway: keep the bigger+richer dataset (it's the right asset and `visited_subscription`
+is an excellent standalone targeting trigger/segment), but **don't expect AUC gains from
+more clickstream features** — invest the next effort in uplift + internal-era usage data.
+
 ## 6. Recommendation & next steps
 
 - **Ship:** v2 multi-task backbone + isotonic calibrator for scoring. LogReg 0.953 is a

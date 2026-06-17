@@ -48,7 +48,7 @@ DROP_AT_READ = [
 ]
 SENTINEL_COLS = [  # -1 means "never happened" -> NaN + missing indicator
     "days_since_last_send", "days_since_last_open", "days_since_web_activity",
-    "days_since_last_txn", "days_since_sub_event", "tenure_days",
+    "days_since_last_txn", "days_since_sub_event", "tenure_days", "days_since_promo_sub",
 ]
 CATEGORICAL = ["country", "last_sub_event"]
 TOP_COUNTRIES = 30
@@ -60,7 +60,9 @@ def load() -> pd.DataFrame:
     usecols = [c for c in head if c not in DROP_AT_READ]
     dtypes = {}
     for c in usecols:
-        if c in ("send_date", "country", "last_sub_event"):
+        if c in ("country", "last_sub_event"):
+            dtypes[c] = "category"   # big memory save vs object strings at 7M rows
+        elif c == "send_date":
             dtypes[c] = "string"
         elif c == "user_id":
             dtypes[c] = "int64"
@@ -70,7 +72,9 @@ def load() -> pd.DataFrame:
         else:
             dtypes[c] = "float32"
     t0 = time.time()
-    df = pd.read_csv(DATA, usecols=usecols, dtype=dtypes)
+    # low_memory=False: single-block parse so category dtype doesn't hit the
+    # per-chunk union_categoricals "dtype of categories must be the same" error.
+    df = pd.read_csv(DATA, usecols=usecols, dtype=dtypes, low_memory=False)
     print(f"loaded {len(df):,} rows x {df.shape[1]} cols in {time.time()-t0:.0f}s "
           f"({df.memory_usage(deep=True).sum()/1e9:.2f} GB)")
     return df
@@ -82,12 +86,13 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         df[c] = df[c].where(~miss)
         df[f"{c}_missing"] = miss.astype("int8")
 
-    df["country"] = df["country"].fillna("").replace("", "unknown")
-    top = df["country"].value_counts().head(TOP_COUNTRIES).index
-    df.loc[~df["country"].isin(top), "country"] = "other"
-    df["last_sub_event"] = df["last_sub_event"].fillna("").replace("", "none")
-    for c in CATEGORICAL:
-        df[c] = df[c].astype("category")
+    # category-safe cleaning (cols are read as category for memory): go via
+    # string for the fillna/top-N collapse, then recompress to category.
+    cs = df["country"].astype("string").fillna("unknown").replace("", "unknown")
+    top = cs.value_counts().head(TOP_COUNTRIES).index
+    df["country"] = cs.where(cs.isin(top), "other").astype("category")
+    df["last_sub_event"] = (df["last_sub_event"].astype("string")
+                            .fillna("none").replace("", "none").astype("category"))
 
     # Drop zero-variance columns (streams/task/storage cols in this window, ...)
     const = [c for c in df.columns
@@ -139,8 +144,26 @@ def evaluate(name, y, score, weight):
     return auc, ap
 
 
+CAP = 4_000_000  # memory cap for training (the full dataset stays on disk / in CH)
+
+
 def main():
     df = clean(load())
+    # Bigger datasets live on disk/ClickHouse; for the in-RAM model we cap to CAP
+    # rows = ALL positives + sampled negatives, scaling negative weights so the
+    # population is still represented (positives are the scarce, valuable rows).
+    if len(df) > CAP:
+        pos = df[df[TARGET] == 1]
+        neg = df[df[TARGET] == 0]
+        keep = CAP - len(pos)
+        frac = keep / len(neg)
+        neg = neg.sample(n=keep, random_state=42).copy()
+        neg["sample_weight"] = neg["sample_weight"] / frac
+        df = pd.concat([pos, neg]).reset_index(drop=True)
+        del pos, neg
+        gc.collect()
+        print(f"capped to {len(df):,} rows for training (all {int(df[TARGET].sum()):,} positives "
+              f"+ {keep:,} negatives, weights rescaled ×{1/frac:.2f})")
     train, test = time_split(df)
     del df
     gc.collect()

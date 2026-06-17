@@ -191,7 +191,9 @@ SELECT user_id, toDate(created_at) AS d,
        countIf(event_type='event' AND category='File'    AND action='View')     AS file_views,
        countIf(event_type='event' AND category='video'   AND action IN ('stream_start','stream_session')) AS streams,
        countIf(event_type='pageview' AND (positionCaseInsensitive(url,'pricing')>0 OR positionCaseInsensitive(url,'payment')>0)) AS pricing_views,
-       countIf(matomo_idgoal=4) AS goal4
+       countIf(matomo_idgoal=4) AS goal4,
+       countIf(event_type='event' AND category='Promotional' AND action='visited_subscription') AS promo_sub,
+       countIf(event_type='session_end') AS sessions
 FROM seedr_telemetry.user_telemetry_events
 WHERE toYYYYMM(created_at)=%d
   AND surface IN ('web','landing')
@@ -292,9 +294,9 @@ func atof(s string) float64 {
 }
 
 type webRec struct {
-	user                                                              uint64
-	day                                                               int32
-	pageviews, fileDl, archDl, fileViews, streams, pricingViews, goal4 int32
+	user                                                                                uint64
+	day                                                                                 int32
+	pageviews, fileDl, archDl, fileViews, streams, pricingViews, goal4, promoSub, sessions int32
 }
 
 type emailRec struct {
@@ -395,7 +397,8 @@ func build(o buildOpts) error {
 	if err := scanGlob(o.cacheDir, "web", func(f []string) {
 		webs = append(webs, webRec{uint64(atoi(f[0])), parseDay(f[1]),
 			int32(atoi(f[2])), int32(atoi(f[3])), int32(atoi(f[4])),
-			int32(atoi(f[5])), int32(atoi(f[6])), int32(atoi(f[7])), int32(atoi(f[8]))})
+			int32(atoi(f[5])), int32(atoi(f[6])), int32(atoi(f[7])), int32(atoi(f[8])),
+			int32(atoi(f[9])), int32(atoi(f[10]))})
 	}); err != nil {
 		return err
 	}
@@ -511,6 +514,8 @@ func build(o buildOpts) error {
 		"file_dl_30", "file_dl_90", "archive_dl_30", "archive_dl_90", "file_views_30",
 		"streams_30", "streams_90", "pricing_views_30", "pricing_views_90", "goal4_30", "goal4_90",
 		"days_since_web_activity",
+		"promo_sub_30", "promo_sub_90", "days_since_promo_sub", "sessions_7", "sessions_30",
+		"pv_trend_7_30", "wa_trend_7_30", "send_dow",
 		"tasks_completed_30", "tasks_failed_30", "storage_warnings_30", "tasks_observable",
 		"ever_paid", "ltv_before_usd", "txns_before", "days_since_last_txn", "last_txn_amount",
 		"txns_365d", "premium_at_send",
@@ -645,7 +650,8 @@ func build(o buildOpts) error {
 
 			// web windows
 			var wa7, wa30, pv7, pv30, fd30, fd90, ad30, ad90, fv30, st30, st90, pr30, pr90, g430, g490 int32
-			lastWeb := int32(-1)
+			var promo30, promo90, sess30, sess7 int32
+			lastWeb, lastPromo := int32(-1), int32(-1)
 			for k := len(wrecs) - 1; k >= 0; k-- {
 				wr := wrecs[k]
 				if wr.day >= d {
@@ -658,11 +664,15 @@ func build(o buildOpts) error {
 				if lastWeb < 0 {
 					lastWeb = dd
 				}
+				if wr.promoSub > 0 && lastPromo < 0 {
+					lastPromo = dd
+				}
 				fd90 += wr.fileDl
 				ad90 += wr.archDl
 				st90 += wr.streams
 				pr90 += wr.pricingViews
 				g490 += wr.goal4
+				promo90 += wr.promoSub
 				if dd <= 30 {
 					wa30++
 					pv30 += wr.pageviews
@@ -672,12 +682,20 @@ func build(o buildOpts) error {
 					st30 += wr.streams
 					pr30 += wr.pricingViews
 					g430 += wr.goal4
+					promo30 += wr.promoSub
+					sess30 += wr.sessions
 				}
 				if dd <= 7 {
 					wa7++
 					pv7 += wr.pageviews
+					sess7 += wr.sessions
 				}
 			}
+			// engagement-trend ratios (recent vs window) + send-day weekday
+			// (epoch day 0 = 1970-01-01 = Thursday → dow = (d+4)%7, 0=Sun)
+			pvTrend := float64(pv7) / float64(pv30+1)
+			waTrend := float64(wa7) / float64(wa30+1)
+			sendDow := (d + 4) % 7
 
 			// task windows
 			var tc30, tf30, sw30 int32
@@ -811,6 +829,8 @@ func build(o buildOpts) error {
 				itoa(fd30), itoa(fd90), itoa(ad30), itoa(ad90), itoa(fv30),
 				itoa(st30), itoa(st90), itoa(pr30), itoa(pr90), itoa(g430), itoa(g490),
 				itoa(lastWeb),
+				itoa(promo30), itoa(promo90), itoa(lastPromo), itoa(sess7), itoa(sess30),
+				fmt.Sprintf("%.4f", pvTrend), fmt.Sprintf("%.4f", waTrend), itoa(sendDow),
 				itoa(tc30), itoa(tf30), itoa(sw30), strconv.Itoa(tasksObservable),
 				strconv.Itoa(boolToInt(everPaid)),
 				fmt.Sprintf("%.2f", ltv), itoa(txnsBefore), itoa(daysSinceTxn),
