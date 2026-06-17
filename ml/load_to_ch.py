@@ -59,11 +59,14 @@ def ch_type(col, dtype):
         return "UInt64"
     if c in ("split", "era", "country", "last_sub_event"):
         return "LowCardinality(String)"
+    # float-by-name BEFORE the label_/flag check, so continuous labels
+    # (label_rev_365) aren't mistaken for 0/1 flags
+    if any(k in c for k in ("ltv", "amount", "rate", "share", "weight", "gb_",
+                            "paid_12mo", "_usd", "score", "rev", "monetary")):
+        return "Float32"
     if (c.startswith("seg_") or c.startswith("label_") or c.endswith("_observable")
             or c in ("ever_paid", "premium_at_send", "treatment", "is_premium", "target")):
         return "UInt8"
-    if any(k in c for k in ("ltv", "amount", "rate", "share", "weight", "gb_", "paid_12mo", "_usd", "score")):
-        return "Float32"
     if pd.api.types.is_integer_dtype(dtype):
         return "Int64"
     if pd.api.types.is_float_dtype(dtype):
