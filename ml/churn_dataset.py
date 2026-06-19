@@ -43,7 +43,7 @@ def snapshots():
     last = date(2026, 6, 17) - timedelta(days=HORIZON + 1)
     while d <= last:
         out.append(eday(d))
-        d += timedelta(days=14)
+        d += timedelta(days=7)
     return out
 
 
@@ -85,13 +85,13 @@ def main():
     # email: d, mautic_sent, internal_sent, opened, clicked
     email = load_glob("email", 5)
 
-    revenue = {}  # user -> [(day, amount)]
-    with open(f"{CACHE}/revenue.tsv") as f:
+    revenue = {}  # user -> [(day, amount, plan_id)] — richer source (plan/provider)
+    with open(f"{CACHE}/revenue_full.tsv") as f:
         for line in f:
-            u, ts, amt = line.rstrip("\n").split("\t")
-            u = int(u)
+            p = line.rstrip("\n").split("\t")
+            u = int(p[0])
             if u in keep:
-                revenue.setdefault(u, []).append((int(ts) // 86400, float(amt)))
+                revenue.setdefault(u, []).append((int(p[1]) // 86400, float(p[2]), p[3]))
     for u in revenue:
         revenue[u].sort()
 
@@ -119,7 +119,7 @@ def main():
             "web_active_days_30", "pageviews_30", "file_dl_30", "file_dl_90",
             "archive_dl_30", "streams_90", "pricing_views_30", "days_since_web_activity",
             "ltv_before_usd", "txns_before", "days_since_last_txn", "last_txn_amount", "txns_365d",
-            "prior_txn_gap_median", "cycle_position", "is_annual",
+            "prior_txn_gap_median", "cycle_position", "days_to_renewal", "last_plan_id", "is_annual",
             "sub_tenure_days", "days_since_sub_event", "last_sub_event",
             "prior_cancels", "prior_reactivations", "had_cancel_sched_30",
             "country", "tenure_days", "devices", "mobile_share", "snapshot_age",
@@ -195,12 +195,12 @@ def main():
                     wa30 += 1; pv30 += rec[1]; fd30 += rec[2]; ad30 += rec[3]; pr30 += rec[6]
 
             # monetary (strict < S)
-            ltv = 0.0; ntx = t365 = 0; last_txn_day = -1; last_amt = 0.0
+            ltv = 0.0; ntx = t365 = 0; last_txn_day = -1; last_amt = 0.0; last_plan = "0"
             prior_days = []
-            for d, a in txns:
+            for d, a, pl in txns:
                 if d >= S:
                     break
-                ltv += a; ntx += 1; last_txn_day = d; last_amt = a
+                ltv += a; ntx += 1; last_txn_day = d; last_amt = a; last_plan = pl
                 prior_days.append(d)
                 if S - d <= 365:
                     t365 += 1
@@ -213,12 +213,15 @@ def main():
             else:
                 med_gap = -1
             cycle_pos = round(days_since_txn / med_gap, 3) if med_gap > 0 and days_since_txn >= 0 else -1.0
+            # days until the NEXT expected charge (renewal timing — the key churn signal):
+            # negative = overdue (likely already lapsing), near 0 = renewal imminent.
+            days_to_renewal = (med_gap - days_since_txn) if (med_gap > 0 and days_since_txn >= 0) else -999
             is_annual = 1 if (med_gap > 180 or last_amt >= 60) else 0
 
             country, tenure, devices = "", -1, 0
             if prof:
                 country, devices = prof[0], prof[2]
-                first = min(prof[1], txns[0][0]) if txns else prof[1]
+                first = min(prof[1], txns[0][0]) if txns else prof[1]  # txns[0][0]=first txn day
                 tenure = S - first
 
             w.writerow([
@@ -226,7 +229,7 @@ def main():
                 s30, s90, o90, c90, open_rate, last_send, last_open,
                 wa30, pv30, fd30, fd90, ad30, st90, pr30, last_web,
                 round(ltv, 2), ntx, days_since_txn, round(last_amt, 2), t365,
-                med_gap, cycle_pos, is_annual,
+                med_gap, cycle_pos, days_to_renewal, last_plan, is_annual,
                 S - sub_start, S - last_day, last_type.replace("subscription.", ""),
                 prior_cancels, prior_react, had_cs30,
                 country, tenure, devices, round(mobile.get(u, 0.0), 3),

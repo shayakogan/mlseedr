@@ -28,7 +28,7 @@ print = functools.partial(print, flush=True)
 
 DATA = "train_churn.csv.gz"
 TARGET = "label_churn_30"
-CAT = ["country", "last_sub_event"]
+CAT = ["country", "last_sub_event", "last_plan_id"]
 DROP = ["user_id", "snapshot_date", TARGET]
 
 
@@ -71,17 +71,21 @@ def run(df, label, drop_cs):
     if drop_cs:
         df = df[df.had_cancel_sched_30 == 0].copy()
         df = df.drop(columns=["had_cancel_sched_30"])
-    snaps = sorted(df.snapshot_date.unique())
-    test_snaps = set(snaps[-2:])
-    tr = df[~df.snapshot_date.isin(test_snaps)]
-    te = df[df.snapshot_date.isin(test_snaps)]
+    # USER-disjoint split (NOT time split): with weekly snapshots the same user
+    # appears at many snapshots, so a pure time split leaks (the model memorises a
+    # user seen earlier). Holding out whole users gives the honest generalization AUC.
+    rng = np.random.RandomState(42)
+    users = df.user_id.unique()
+    test_u = set(rng.choice(users, int(len(users) * 0.2), replace=False))
+    tr = df[~df.user_id.isin(test_u)]
+    te = df[df.user_id.isin(test_u)]
     drop = [c for c in DROP if c in df.columns]
     feats = [c for c in df.columns if c not in drop]
     num = [c for c in feats if c not in CAT]
     ytr, yte = tr[TARGET].to_numpy(), te[TARGET].to_numpy()
     print(f"\n=== {label} ===")
     print(f"train {len(tr):,} ({ytr.mean()*100:.1f}% churn) · test {len(te):,} "
-          f"({yte.mean()*100:.1f}% churn) · {len(feats)} feats · test snaps {sorted(test_snaps)}")
+          f"({yte.mean()*100:.1f}% churn) · {len(feats)} feats · user-disjoint split")
 
     # logistic baseline
     prep = ColumnTransformer([
@@ -116,9 +120,10 @@ def run(df, label, drop_cs):
 
 def main():
     df = pd.read_csv(DATA, dtype={"country": "string", "last_sub_event": "string",
-                                  "snapshot_date": "string"})
+                                  "snapshot_date": "string", "last_plan_id": "string"})
     df["country"] = df["country"].fillna("unknown").replace("", "unknown")
     df["last_sub_event"] = df["last_sub_event"].fillna("none")
+    df["last_plan_id"] = df["last_plan_id"].fillna("0")
     print(f"loaded {len(df):,} rows, {df[TARGET].mean()*100:.1f}% churn")
     run(df, "MODEL A — full population (operational risk score)", drop_cs=False)
     run(df, "MODEL B — pre-emptive (before the cancel click)", drop_cs=True)

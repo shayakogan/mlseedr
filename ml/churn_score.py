@@ -26,11 +26,12 @@ FEATS = ["em_sent_30", "em_sent_90", "em_opened_90", "em_clicked_90", "em_open_r
          "days_since_last_send", "days_since_last_open", "web_active_days_30", "pageviews_30",
          "file_dl_30", "file_dl_90", "archive_dl_30", "streams_90", "pricing_views_30",
          "days_since_web_activity", "ltv_before_usd", "txns_before", "days_since_last_txn",
-         "last_txn_amount", "txns_365d", "prior_txn_gap_median", "cycle_position", "is_annual",
+         "last_txn_amount", "txns_365d", "prior_txn_gap_median", "cycle_position",
+         "days_to_renewal", "last_plan_id", "is_annual",
          "sub_tenure_days", "days_since_sub_event", "last_sub_event", "prior_cancels",
          "prior_reactivations", "had_cancel_sched_30", "country", "tenure_days", "devices",
          "mobile_share", "snapshot_age"]
-CAT = ["country", "last_sub_event"]
+CAT = ["country", "last_sub_event", "last_plan_id"]
 
 
 def feats_for(sev, wrecs, erecs, txns, prof, mob, S):
@@ -75,16 +76,17 @@ def feats_for(sev, wrecs, erecs, txns, prof, mob, S):
         fd90 += rec[2]; st90 += rec[5]
         if dd <= 30:
             wa30 += 1; pv30 += rec[1]; fd30 += rec[2]; ad30 += rec[3]; pr30 += rec[6]
-    ltv = 0.0; ntx = t365 = 0; last_txn_day = -1; last_amt = 0.0; pdays = []
-    for d, a in txns:
+    ltv = 0.0; ntx = t365 = 0; last_txn_day = -1; last_amt = 0.0; last_plan = "0"; pdays = []
+    for d, a, pl in txns:
         if d >= S:
             break
-        ltv += a; ntx += 1; last_txn_day = d; last_amt = a; pdays.append(d)
+        ltv += a; ntx += 1; last_txn_day = d; last_amt = a; last_plan = pl; pdays.append(d)
         if S - d <= 365:
             t365 += 1
     dstx = S - last_txn_day if last_txn_day >= 0 else -1
     med_gap = sorted(pdays[i] - pdays[i - 1] for i in range(1, len(pdays)))[max(len(pdays) - 1, 1) // 2] if len(pdays) >= 2 else -1
     cyc = round(dstx / med_gap, 3) if med_gap > 0 and dstx >= 0 else -1.0
+    days_to_renewal = (med_gap - dstx) if (med_gap > 0 and dstx >= 0) else -999
     is_annual = 1 if (med_gap > 180 or last_amt >= 60) else 0
     country, tenure, devices = "", -1, 0
     if prof:
@@ -97,7 +99,8 @@ def feats_for(sev, wrecs, erecs, txns, prof, mob, S):
                archive_dl_30=ad30, streams_90=st90, pricing_views_30=pr30, days_since_web_activity=last_web,
                ltv_before_usd=round(ltv, 2), txns_before=ntx, days_since_last_txn=dstx,
                last_txn_amount=round(last_amt, 2), txns_365d=t365, prior_txn_gap_median=med_gap,
-               cycle_position=cyc, is_annual=is_annual, sub_tenure_days=S - sub_start,
+               cycle_position=cyc, days_to_renewal=days_to_renewal, last_plan_id=last_plan,
+               is_annual=is_annual, sub_tenure_days=S - sub_start,
                days_since_sub_event=S - last_day, last_sub_event=last_type.replace("subscription.", ""),
                prior_cancels=prior_cancels, prior_reactivations=prior_react, had_cancel_sched_30=had_cs30,
                country=country if country else "unknown", tenure_days=tenure, devices=devices,
@@ -132,10 +135,10 @@ def main():
     for u in web: web[u].sort()
     for u in email: email[u].sort()
     revenue = {}
-    for line in open(f"{CACHE}/revenue.tsv"):
-        u, ts, amt = line.rstrip("\n").split("\t"); u = int(u)
+    for line in open(f"{CACHE}/revenue_full.tsv"):
+        p = line.rstrip("\n").split("\t"); u = int(p[0])
         if u in keep:
-            revenue.setdefault(u, []).append((int(ts) // 86400, float(amt)))
+            revenue.setdefault(u, []).append((int(p[1]) // 86400, float(p[2]), p[3]))
     for u in revenue: revenue[u].sort()
     profile, mobile = {}, {}
     for line in open(f"{CACHE}/profile.tsv"):
@@ -158,8 +161,9 @@ def main():
     print(f"active subscribers scorable today: {len(X):,}")
 
     # train operational churn model (Model A) on the historical churn dataset
-    tr = pd.read_csv("train_churn.csv.gz", dtype={"country": "string", "last_sub_event": "string"})
+    tr = pd.read_csv("train_churn.csv.gz", dtype={"country": "string", "last_sub_event": "string", "last_plan_id": "string"})
     tr["country"] = tr["country"].fillna("unknown"); tr["last_sub_event"] = tr["last_sub_event"].fillna("none")
+    tr["last_plan_id"] = tr["last_plan_id"].fillna("0")
     Xtr = tr[FEATS].copy()
     for c in CAT:
         Xtr[c] = Xtr[c].astype("category")

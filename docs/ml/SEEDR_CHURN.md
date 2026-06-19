@@ -62,6 +62,32 @@ churn 55% and don't need a model; route them straight to the soft-cancel save fl
 4. **Add as a 3rd head** to the multi-task backbone (conv / renewal / churn) once the
    feature set is richer, so retention and conversion share one representation.
 
+## 3b. v2 improvement (2026-06-19): billing features + honest evaluation
+
+Asked "can we raise the ~0.60 AUC?". Yes — but via **features, not dataset size**:
+
+- **Added the research-predicted lever — billing-cycle/plan features:** `days_to_renewal`
+  (= expected term − days since last txn; renewal-timing signal), `last_plan_id` (plan tier,
+  from `revenue_full.tsv`). Weekly snapshots (8.5K → 17.5K rows).
+- **Caught a leakage trap:** with weekly snapshots the same user appears at many snapshots,
+  so a pure **time split leaks** (model memorises a user seen at an earlier snapshot) — it
+  reported a too-good AUC 0.874. Switched evaluation to a **user-disjoint split** (whole users
+  held out) for the honest number.
+
+| Model | old (bi-weekly, time-split) | **v2 honest (user-disjoint)** | top-10% precision | lift |
+|---|---|---|---|---|
+| A — operational | 0.605 | **0.781** | 67% | ×3.8 |
+| B — pre-emptive | 0.649 | 0.665 | 29% | ×2.1 |
+
+- **Operational churn (Model A) AUC 0.60 → 0.78** — a real, large gain; top drivers now
+  `had_cancel_sched_30`, `days_since_last_txn`, `prior_txn_gap_median`, `prior_cancels`, `snapshot_age`.
+- **Pre-emptive (Model B) barely moved (0.65 → 0.67)** — predicting churn *before any cancel
+  signal* stays hard; needs the exact next-renewal date + usage-decline + longer history.
+- **Dataset size alone ≈ no help** (weekly snapshots are autocorrelated); the gain is the
+  billing features + the `cancellation_scheduled` signal.
+- Current base re-scored with Model A → `ml.churn_scores`; `ml.retention_priority` rebuilt
+  (P1 urgent_save 637 users, ~$9.4K/30d at risk; 85 subscribers at >0.5 risk).
+
 ## 4b. Alignment with `SEEDR_CHURN_PLAN.md` (the pre-existing draft plan)
 
 This work executes the draft plan. Done ✅ / open ⬜:
