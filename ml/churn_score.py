@@ -178,7 +178,46 @@ def main():
                                categories=Xtr[c].cat.categories)
     risk = gb.predict_proba(Xs)[:, 1]
 
-    out = pd.DataFrame({"user_id": uids, "churn_risk_30d": risk.round(4),
+    # ---- exact-billing-date override (Partytime `expires_on` + payment method) ----
+    # expires_on exists only since June 2026 (postdates the training window, so the
+    # MODEL can't learn it yet), but it is a near-deterministic involuntary-churn
+    # signal: 120/120 already-expired subscribers had has_active_payment_method=0.
+    # We blend it into the score as a rule override for the users who have it.
+    exp = {}  # user -> (latest expires_day, has_pm)
+    from datetime import datetime
+    for line in open(f"{CACHE}/sub_events_full.tsv"):
+        p = line.rstrip("\n").split("\t")
+        if len(p) < 6 or p[3] == "":
+            continue
+        u = int(p[0])
+        try:
+            ed = (datetime.strptime(p[3][:10], "%Y-%m-%d").date() - date(1970, 1, 1)).days
+        except ValueError:
+            continue
+        # keep the latest event (file is sorted by user, ts ascending)
+        exp[u] = (ed, int(p[4]))
+    cs_flag = X.had_cancel_sched_30.to_numpy()
+    d2e = []; haspm = []; brisk = []
+    for i, u in enumerate(uids):
+        if u in exp:
+            ed, pm = exp[u]; dte = ed - TODAY
+            haspm.append(pm); d2e.append(dte)
+            if -7 <= dte <= 30 and pm == 0:
+                brisk.append(0.95)          # imminent involuntary expiry (validated 120/120)
+            elif 0 <= dte <= 30 and cs_flag[i] == 1:
+                brisk.append(0.90)          # imminent voluntary
+            elif 0 <= dte <= 15:
+                brisk.append(0.50)          # renewal imminent, has payment method
+            else:
+                brisk.append(0.0)
+        else:
+            d2e.append(-999); haspm.append(-1); brisk.append(0.0)
+    final_risk = np.maximum(risk, np.array(brisk))
+    risk_source = ["billing_rule" if b > r else "model" for b, r in zip(brisk, risk)]
+
+    out = pd.DataFrame({"user_id": uids, "churn_risk_30d": final_risk.round(4),
+                        "model_risk": risk.round(4), "days_to_expires": d2e,
+                        "has_payment_method": haspm, "risk_source": risk_source,
                         "had_cancel_sched": X.had_cancel_sched_30.values,
                         "days_since_last_txn": X.days_since_last_txn.values,
                         "cycle_position": X.cycle_position.values,

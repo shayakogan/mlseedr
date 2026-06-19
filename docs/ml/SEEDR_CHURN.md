@@ -88,6 +88,27 @@ Asked "can we raise the ~0.60 AUC?". Yes — but via **features, not dataset siz
 - Current base re-scored with Model A → `ml.churn_scores`; `ml.retention_priority` rebuilt
   (P1 urgent_save 637 users, ~$9.4K/30d at risk; 85 subscribers at >0.5 risk).
 
+## 3c. Exact billing date (`expires_on`) — 2026-06-19
+
+Pulled the **exact next-billing / period-end date** `expires_on` + `has_active_payment_method`
+from Partytime subscription-event metadata (`dataset_cache/sub_events_full.tsv`).
+
+- **Near-deterministic involuntary-churn signal (validated): 120/120 already-`expired`
+  subscribers had `has_active_payment_method=0`.** Among the current base, 196–220 are
+  "imminent involuntary" (expiring ≤30d AND no payment method).
+- **Cannot raise the trained model's AUC yet:** `expires_on` is populated only since June
+  2026 (0 events before May; training snapshots end 2026-05-17) AND June churn labels aren't
+  30 days mature → the feature is all-missing in the training/test window. The model already
+  captures the *trainable* part of renewal timing via the `prior_txn_gap_median` / `days_to_renewal`
+  txn-cadence proxy (top features, AUC 0.78).
+- **Used now as a rule override in scoring** (`max(model_risk, billing_rule)`): 362 subscribers
+  re-scored, **220 flagged risk 0.95** the 0.78 model underweighted. New `ml.retention_priority`
+  tier **`P0_fix_payment`** (220 users, no payment method + expiring): the cheapest, highest-
+  certainty save — "update your card", no discount.
+- **Path to a higher trained AUC (~0.85, expected):** retrain ~mid-to-late July 2026 once
+  June+ `expires_on` data exists AND those cohorts' 30-day churn labels have matured; then
+  `days_to_expires` + `has_payment_method` enter the model as features.
+
 ## 4b. Alignment with `SEEDR_CHURN_PLAN.md` (the pre-existing draft plan)
 
 This work executes the draft plan. Done ✅ / open ⬜:
