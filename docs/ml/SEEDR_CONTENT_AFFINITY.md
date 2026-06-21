@@ -68,3 +68,21 @@ ebook (epub/pdf/mobi…), software (exe/dmg/iso…), archive (zip/rar/7z…), im
 # token in ~/.seedr_api (token=..., base=https://v2.seedr.cc/api/v0.1/admin/fs/v1)
 .venv/bin/python ml/content_ingest.py -n 2000 -workers 6   # → content_features.csv.gz → ml.user_content
 ```
+
+## Lift test (2026-06-19): content features in the models
+Joined content onto churn/LTV datasets, compared GBM with vs without content
+(user-disjoint / time split, identical rows). Code: `ml/churn_lift.py`, `ml/ltv_lift.py`.
+
+| Model | Metric | no content | + content | lift |
+|---|---|---|---|---|
+| Churn | ROC-AUC | 0.787 | 0.797 | **+0.010** |
+| LTV | P(pay) AUC | 0.799 | 0.799 | ~0 |
+| LTV | Spearman (revenue rank) | 0.684 | 0.699 | **+0.016** |
+
+**Honest verdict: small positive lift, not a breakthrough.** Reasons: (1) content is a
+NOW snapshot vs historical labels (mild leak blunts it); (2) content correlates with
+signals the models already use (heavy storage ≈ heavy bandwidth/engagement); (3) small
+overlap samples add noise. The real value of content is NOT marginal retro-AUC but:
+current scoring/personas, content-aware campaigns (HD-upsell, storage-pressure, win-back),
+and new signals absent from telemetry (`last_signin_day`, `days_since_last_add`) — which
+will lift models properly once trained on LIVE content snapshots (no temporal mismatch).
