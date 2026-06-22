@@ -70,6 +70,35 @@ hd_upsell (1,145), reactivate_empty (3,019), vip_nurture (1,061). Refresh = re-q
 `user_billing_health` · `user_edge` · `user_content` · `user_storage_quota` ·
 `plan_storage` · `ltv_scores` · `churn_scores` · `retention_priority` + training datasets.
 
+## Feature impact — do the new features / personas move the metrics? (`ml/churn_ablation.py`)
+Ablation on churn (user-disjoint 80/20, GBM), baseline vs baseline + new features
+(storage_used_pct, content persona, content/edge/task signals):
+
+| Model | baseline AUC | + new AUC | Δ |
+|---|---|---|---|
+| A — operational (full pop.) | 0.781 | **0.788** | **+0.007** (PR-AUC +0.010, lift +0.11) |
+| B — pre-emptive (before cancel) | 0.665 | 0.648 | −0.018 (now-snapshot noise on past labels) |
+
+**Retro AUC lift is marginal/mixed** — exactly the temporal-mismatch ceiling that
+motivated live snapshots (now-features joined onto historical labels). BUT the new
+features are **strongly discriminative in raw data** — the real payoff is targeting +
+future live-snapshot retraining, not retro AUC:
+
+| Split | churn rate | avg pred-LTV |
+|---|---|---|
+| persona empty / archive | 38–40% | $10–13 |
+| persona video_streamer / music | 28–30% | $22–29 |
+| persona mixed | 19.6% | $20 |
+| storage <50% used | 33.8% | $18 |
+| storage 80–100% used | 17.7% | $41 |
+
+So persona separates churn ~2× and LTV ~3–4×; storage utilisation is monotonic
+(fuller library → ~½ the churn, ~2.3× the value). The marginal model gain is small
+because baseline behavioural features (downloads/recency/txns) already encode most of
+it (correlated) — the features earn their keep in **segmentation/`next_best_action`**
+(storage_upsell, persona campaigns) and will lift AUC for real once trained on live
+`customer_360_history` (no now-vs-past mismatch). Conversion stays at its ~0.95 ceiling.
+
 ## Uplift measurement (`ml/measure_uplift.sql`)
 Single CH query: conv(treatment) − conv(holdout) + ARPU + two-proportion z-test verdict
 for a campaign, from `ml.campaign_holdout` × `seedr_telemetry.revenue_facts`. Run before a
