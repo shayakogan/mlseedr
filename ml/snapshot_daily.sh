@@ -44,6 +44,8 @@ SELECT l.user_id AS user_id, l.value_tier AS value_tier, l.pred_ltv_12m AS pred_
   ifNull(ch.days_to_expires,-999) AS days_to_expires, ifNull(ch.had_cancel_sched,0) AS had_cancel_sched,
   ifNull(bh.in_grace_period,0) AS in_grace_period, ifNull(bh.reconciliation_critical,0) AS reconciliation_critical,
   ifNull(co.content_persona,'unknown') AS content_persona, ifNull(co.storage_gb,-1) AS storage_gb,
+  ifNull(co.files_added_30d,0) AS files_added_30d, ifNull(co.n_lost_files,0) AS n_lost_files,
+  ifNull(co.saw_walkthrough,-1) AS saw_walkthrough,
   ifNull(e.n_rate_limited_7d,0) AS n_rate_limited_7d, ifNull(e.n_stall_7d,0) AS n_stall_7d,
   ifNull(e.media_requests_7d,0) AS media_requests_7d, ifNull(e.stream_gb_7d,0) AS stream_gb_7d,
   ifNull(t.downloads_30d,0) AS downloads_30d, ifNull(t.task_failure_rate,0) AS task_failure_rate,
@@ -59,6 +61,7 @@ LEFT JOIN ml.user_content co ON l.user_id=co.user_id
 LEFT JOIN ml.user_edge e ON l.user_id=e.user_id
 LEFT JOIN ml.user_tasks t ON l.user_id=t.user_id"
 
+CH "" "CREATE TABLE IF NOT EXISTS ml.customer_360_history ENGINE=MergeTree PARTITION BY snapshot_date ORDER BY (user_id, snapshot_date) AS SELECT today() AS snapshot_date, * FROM ml.customer_360 LIMIT 0"
 TODAY=$(date -u +%F)
 CH "" "ALTER TABLE ml.customer_360_history DROP PARTITION '$TODAY'"  # idempotent for re-runs
 CH "" "INSERT INTO ml.customer_360_history SELECT today() AS snapshot_date, * FROM ml.customer_360"
